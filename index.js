@@ -52,6 +52,9 @@ const defaultOptions = {
   fixInsertRule: true,
   skipThirdPartyRequests: false,
   cacheAjaxRequests: false,
+  saveAjaxRequestJSON: false,
+  splitAjaxRequestFiles: false,
+  stripFromAjaxRequestURLs: "",
   http2PushManifest: false,
   // may use some glob solution in the future, if required
   // works when http2PushManifest: true
@@ -139,6 +142,32 @@ const defaults = userOptions => {
 };
 
 const normalizePath = path => (path === "/" ? "/" : path.replace(/\/$/, ""));
+
+const stringToSlug = str => {
+  str = str.replace(/^\s+|\s+$/g, ""); // trim
+  str = str.toLowerCase();
+  str = str.replace(/\?/g, '-');
+  str = str.replace(/\&/g, '-');
+  str = str.replace(/\=/g, '-');
+
+  // remove accents, swap ñ for n, etc
+  var from = "åàáãäâèéëêìíïîòóöôùúüûñç·/_,:;";
+  var to = "aaaaaaeeeeiiiioooouuuunc------";
+
+  for (var i = 0, l = from.length; i < l; i++) {
+    str = str.replace(new RegExp(from.charAt(i), "g"), to.charAt(i));
+  }
+
+  str = str
+    .replace(/[^a-z0-9 -]/g, "") // remove invalid chars
+    .replace(/\s+/g, "-") // collapse whitespace and replace by -
+    .replace(/-+/g, "-") // collapse dashes
+    .replace(/^-+/, "") // trim - from start of text
+    .replace(/-+$/, ""); // trim - from end of text
+
+  return str;
+}
+
 
 /**
  *
@@ -570,6 +599,34 @@ const fixInsertRule = ({ page }) => {
   });
 };
 
+const saveAjaxRequestJSONfile = async (ajaxCache, destinationDir, fs, split = false, fileName = "data.json") => {
+  if (!split) {
+    const ajaxCachePaths = Object.keys(ajaxCache);
+
+    for (let i = 0; i < ajaxCachePaths.length; i++) {
+      const pagePath = ajaxCachePaths[i];
+      const pagePathNoHTML = pagePath.replace('.html', '');
+      const filePath = path.join(destinationDir, pagePathNoHTML).replace(/\//g, path.sep);
+      const data = ajaxCache[pagePath];
+
+      if (Object.keys(data).length < 1) {
+        throw new Error(`NO DATA for pagePath: ${pagePath}`);
+      } else if (await !fs.existsSync(path.join(filePath, fileName))) {
+        await mkdirp.sync(filePath);
+        await fs.writeFileSync(path.join(filePath, fileName), JSON.stringify(data));
+      }
+    }
+  } else {
+    const filePath = path.join(destinationDir, fileName).replace(/\//g, path.sep);
+    if (Object.keys(ajaxCache).length < 1) {
+      throw new Error(`NO DATA for ajaxCache at filePath: ${filePath}`);
+    } else if (await !fs.existsSync(path.join(filePath, fileName))) {
+      await fs.writeFileSync(filePath, JSON.stringify(ajaxCache));
+    }
+  }
+  return true;
+};
+
 const fixFormFields = ({ page }) => {
   return page.evaluate(() => {
     Array.from(document.querySelectorAll("[type=radio]")).forEach(element => {
@@ -730,6 +787,9 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
     },
     afterFetch: async ({ page, route, browser, addToQueue }) => {
       const pageUrl = `${basePath}${route}`;
+      const saveAjaxRequestJSON = options.saveAjaxRequestJSON;
+      const splitAjaxRequestFiles = options.splitAjaxRequestFiles;
+      const stripFromAjaxRequestURLs = options.stripFromAjaxRequestURLs;
       if (options.removeStyleTags) await removeStyleTags({ page });
       if (options.removeScriptTags) await removeScriptTags({ page });
       if (options.removeBlobs) await removeBlobs({ page });
@@ -782,7 +842,25 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
       }
       if (options.asyncScriptTags) await asyncScriptTags({ page });
 
-      await page.evaluate(ajaxCache => {
+      if (ajaxCache && Object.keys(ajaxCache).length > 0 && saveAjaxRequestJSON) {
+        await saveAjaxRequestJSONfile(ajaxCache, destinationDir, fs);
+
+        for (const pagePath in ajaxCache) {
+          const pageData = ajaxCache[pagePath];
+          if (splitAjaxRequestFiles) {
+            for (const requestPath in pageData) {
+              const requestData = pageData[requestPath];
+              const requestSlug = stringToSlug(requestPath.replace(stripFromAjaxRequestURLs, ''));
+              const dataDir = path.normalize(`${process.cwd()}/build/data/`);
+              await mkdirp.sync(dataDir);
+              await saveAjaxRequestJSONfile(requestData, dataDir, fs, true, `${requestSlug}.json`);
+            }
+          }
+          delete ajaxCache[pagePath];
+        }
+      }
+
+      await page.evaluate(ajaxCache => { // here here
         const snapEscape = (() => {
           const UNSAFE_CHARS_REGEXP = /[<>\/\u2028\u2029]/g;
           // Mapping of unsafe HTML and invalid JavaScript line terminator chars to their
