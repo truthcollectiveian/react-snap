@@ -72,6 +72,7 @@ const defaultOptions = {
   //# even more workarounds
   removeStyleTags: false,
   preloadImages: false,
+  saveImagesLocally: false,
   // add async true to script tags
   asyncScriptTags: false,
   //# another feature creep
@@ -178,12 +179,14 @@ const preloadResources = opt => {
     page,
     basePath,
     preloadImages,
+    saveImagesLocally,
     cacheAjaxRequests,
     preconnectThirdParty,
     http2PushManifest,
     ignoreForPreload
   } = opt;
   const ajaxCache = {};
+  const imagesToSave = {};
   const http2PushManifestItems = [];
   const uniqueResources = new Set();
   page.on("response", async response => {
@@ -193,6 +196,12 @@ const preloadResources = opt => {
     const route = responseUrl.replace(basePath, "");
     if (/^http:\/\/localhost/i.test(responseUrl)) {
       if (uniqueResources.has(responseUrl)) return;
+
+      if (saveImagesLocally && /\.(png|jpg|jpeg|webp|gif|svg)$/.test(responseUrl)) {
+        const buffer = await response.buffer();
+        imagesToSave[route] = buffer;
+      }
+
       if (preloadImages && /\.(png|jpg|jpeg|webp|gif|svg)$/.test(responseUrl)) {
         if (http2PushManifest) {
           http2PushManifestItems.push({
@@ -248,7 +257,7 @@ const preloadResources = opt => {
       }, domain);
     }
   });
-  return { ajaxCache, http2PushManifestItems };
+  return { ajaxCache, http2PushManifestItems, imagesToSave };
 };
 
 const removeStyleTags = ({ page }) =>
@@ -599,6 +608,23 @@ const fixInsertRule = ({ page }) => {
   });
 };
 
+const saveImageLocally = async (buffer, imageURL, destinationDir, fs, pathPrefix = '/static/media') => {
+  const urlObj = url.parse(imageURL);
+  const pathObj = path.parse(imageURL);
+  const fileName = pathObj.base;
+  const filePath = urlObj.pathname.replace(fileName, '');
+
+  const pathNoFile = path.join(destinationDir, pathPrefix, filePath).replace(/\//g, path.sep);
+  const fileDestination = path.join(pathNoFile, fileName).replace(/\//g, path.sep);
+
+  if (await !fs.existsSync(pathNoFile)) {
+    await mkdirp.sync(pathNoFile);
+  }
+  await fs.writeFileSync(fileDestination, buffer);
+
+  return true;
+};
+
 const saveAjaxRequestJSONfile = async (ajaxCache, destinationDir, fs, split = false, fileName = "data.json") => {
   if (!split) {
     const ajaxCachePaths = Object.keys(ajaxCache);
@@ -750,6 +776,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
   const basePath = `http://localhost:${options.port}`;
   const publicPath = options.publicPath;
   const ajaxCache = {};
+  const imagesToSave = {};
   const { http2PushManifest } = options;
   const http2PushManifestItems = {};
 
@@ -761,6 +788,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
     beforeFetch: async ({ page, route }) => {
       const {
         preloadImages,
+        saveImagesLocally,
         cacheAjaxRequests,
         preconnectThirdParty
       } = options;
@@ -770,11 +798,12 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
         preconnectThirdParty ||
         http2PushManifest
       ) {
-        const { ajaxCache: ac, http2PushManifestItems: hpm } = preloadResources(
+        const { ajaxCache: ac, http2PushManifestItems: hpm, imagesToSave: its } = preloadResources(
           {
             page,
             basePath,
             preloadImages,
+            saveImagesLocally,
             cacheAjaxRequests,
             preconnectThirdParty,
             http2PushManifest,
@@ -783,6 +812,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
         );
         ajaxCache[route] = ac;
         http2PushManifestItems[route] = hpm;
+        imagesToSave[route] = its;
       }
     },
     afterFetch: async ({ page, route, browser, addToQueue }) => {
@@ -790,6 +820,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
       const saveAjaxRequestJSON = options.saveAjaxRequestJSON;
       const splitAjaxRequestFiles = options.splitAjaxRequestFiles;
       const stripFromAjaxRequestURLs = options.stripFromAjaxRequestURLs;
+      const saveImagesLocally = options.saveImagesLocally;
       if (options.removeStyleTags) await removeStyleTags({ page });
       if (options.removeScriptTags) await removeScriptTags({ page });
       if (options.removeBlobs) await removeBlobs({ page });
@@ -847,7 +878,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
 
         for (const pagePath in ajaxCache) {
           const pageData = ajaxCache[pagePath];
-          if (splitAjaxRequestFiles) {
+          if (splitAjaxRequestFiles) { // TODO: have this if statement wrap the for loop above?
             for (const requestPath in pageData) {
               const requestData = pageData[requestPath];
               const requestSlug = stringToSlug(requestPath.replace(stripFromAjaxRequestURLs, ''));
@@ -857,6 +888,21 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
             }
           }
           delete ajaxCache[pagePath];
+        }
+      }
+
+      if (imagesToSave && Object.keys(imagesToSave).length > 0 && saveImagesLocally) {
+        const imageList = [];
+
+        for (const pagePath in imagesToSave) {
+          const pageImages = imagesToSave[pagePath];
+          for (const imageURL in pageImages) {
+            if (imageList.indexOf(imageURL) < 0) {
+              const buffer = pageImages[imageURL];
+              await saveImageLocally(buffer, imageURL, destinationDir, fs);
+              imageList.push(imageURL);
+            }
+          }
         }
       }
 
