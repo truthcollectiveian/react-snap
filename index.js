@@ -61,6 +61,7 @@ const defaultOptions = {
   ignoreForPreload: ["service-worker.js"],
   //# unstable configurations
   preconnectThirdParty: true,
+  remoteDataDomain: '',
   // Experimental. This config stands for two strategies inline and critical.
   // TODO: inline strategy can contain errors, like, confuse relative urls
   inlineCss: false,
@@ -147,9 +148,9 @@ const normalizePath = path => (path === "/" ? "/" : path.replace(/\/$/, ""));
 const stringToSlug = str => {
   str = str.replace(/^\s+|\s+$/g, ""); // trim
   str = str.toLowerCase();
-  str = str.replace(/\?/g, '-');
-  str = str.replace(/\&/g, '-');
-  str = str.replace(/\=/g, '-');
+  str = str.replace(/\?/g, "-");
+  str = str.replace(/\&/g, "-");
+  str = str.replace(/\=/g, "-");
 
   // remove accents, swap ñ for n, etc
   var from = "åàáãäâèéëêìíïîòóöôùúüûñç·/_,:;";
@@ -182,6 +183,7 @@ const preloadResources = opt => {
     saveImagesLocally,
     cacheAjaxRequests,
     preconnectThirdParty,
+    remoteDataDomain,
     http2PushManifest,
     ignoreForPreload
   } = opt;
@@ -194,7 +196,7 @@ const preloadResources = opt => {
     if (/^data:|blob:/i.test(responseUrl)) return;
     const ct = response.headers()["content-type"] || "";
     const route = responseUrl.replace(basePath, "");
-    if (/^http:\/\/localhost/i.test(responseUrl)) {
+    if (/^http:\/\/localhost/i.test(responseUrl) || (remoteDataDomain.length && new RegExp(remoteDataDomain, "i").test(responseUrl))) {
       if (uniqueResources.has(responseUrl)) return;
 
       if (saveImagesLocally && /\.(png|jpg|jpeg|webp|gif|svg)$/.test(responseUrl)) {
@@ -608,11 +610,11 @@ const fixInsertRule = ({ page }) => {
   });
 };
 
-const saveImageLocally = async (buffer, imageURL, destinationDir, fs, pathPrefix = '/static/media') => {
+const saveImageLocally = async (buffer, imageURL, destinationDir, fs, pathPrefix = "/static/media") => {
   const urlObj = url.parse(imageURL);
   const pathObj = path.parse(imageURL);
   const fileName = pathObj.base;
-  const filePath = urlObj.pathname.replace(fileName, '');
+  const filePath = urlObj.pathname.replace(fileName, "");
 
   const pathNoFile = path.join(destinationDir, pathPrefix, filePath).replace(/\//g, path.sep);
   const fileDestination = path.join(pathNoFile, fileName).replace(/\//g, path.sep);
@@ -631,7 +633,7 @@ const saveAjaxRequestJSONfile = async (ajaxCache, destinationDir, fs, split = fa
 
     for (let i = 0; i < ajaxCachePaths.length; i++) {
       const pagePath = ajaxCachePaths[i];
-      const pagePathNoHTML = pagePath.replace('.html', '');
+      const pagePathNoHTML = pagePath.replace(".html", "");
       const filePath = path.join(destinationDir, pagePathNoHTML).replace(/\//g, path.sep);
       const data = ajaxCache[pagePath];
 
@@ -790,7 +792,8 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
         preloadImages,
         saveImagesLocally,
         cacheAjaxRequests,
-        preconnectThirdParty
+        preconnectThirdParty,
+        remoteDataDomain
       } = options;
       if (
         preloadImages ||
@@ -806,6 +809,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
             saveImagesLocally,
             cacheAjaxRequests,
             preconnectThirdParty,
+            remoteDataDomain,
             http2PushManifest,
             ignoreForPreload: options.ignoreForPreload
           }
@@ -881,7 +885,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
           if (splitAjaxRequestFiles) { // TODO: have this if statement wrap the for loop above?
             for (const requestPath in pageData) {
               const requestData = pageData[requestPath];
-              const requestSlug = stringToSlug(requestPath.replace(stripFromAjaxRequestURLs, ''));
+              const requestSlug = stringToSlug(requestPath.replace(stripFromAjaxRequestURLs, ""));
               const dataDir = path.normalize(`${process.cwd()}/build/data/`);
               await mkdirp.sync(dataDir);
               await saveAjaxRequestJSONfile(requestData, dataDir, fs, true, `${requestSlug}.json`);
