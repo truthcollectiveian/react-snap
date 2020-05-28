@@ -190,8 +190,7 @@ const preloadResources = opt => {
     ignoreForPreload
   } = opt;
   const ajaxCache = {};
-  const imagesToSave = {};
-  const pdfsToSave = {};
+  const assetsToSave = {};
   const http2PushManifestItems = [];
   const uniqueResources = new Set();
   page.on("response", async response => {
@@ -204,12 +203,10 @@ const preloadResources = opt => {
 
       if (saveImagesLocally && /\.(png|jpg|jpeg|webp|gif|svg)$/.test(responseUrl)) {
         const buffer = await response.buffer();
-        imagesToSave[route] = buffer;
-      }
-
-      if (savePDFsLocally && /\.(pdf)$/.test(responseUrl)) {
+        assetsToSave[route] = buffer;
+      } else if (savePDFsLocally && /\.(pdf)$/.test(responseUrl)) {
         const buffer = await response.buffer();
-        pdfsToSave[route] = buffer;
+        assetsToSave[route] = buffer;
       }
 
       if (preloadImages && /\.(png|jpg|jpeg|webp|gif|svg)$/.test(responseUrl)) {
@@ -267,7 +264,7 @@ const preloadResources = opt => {
       }, domain);
     }
   });
-  return { ajaxCache, http2PushManifestItems, imagesToSave, pdfsToSave };
+  return { ajaxCache, http2PushManifestItems, assetsToSave };
 };
 
 const removeStyleTags = ({ page }) =>
@@ -618,26 +615,9 @@ const fixInsertRule = ({ page }) => {
   });
 };
 
-const saveImageLocally = async (buffer, imageURL, destinationDir, fs, pathPrefix = "/static/media") => {
-  const urlObj = url.parse(imageURL);
-  const pathObj = path.parse(imageURL);
-  const fileName = pathObj.base;
-  const filePath = urlObj.pathname.replace(fileName, "");
-
-  const pathNoFile = path.join(destinationDir, pathPrefix, filePath).replace(/\//g, path.sep);
-  const fileDestination = path.join(pathNoFile, fileName).replace(/\//g, path.sep);
-
-  if (await !fs.existsSync(pathNoFile)) {
-    await mkdirp.sync(pathNoFile);
-  }
-  await fs.writeFileSync(fileDestination, buffer);
-
-  return true;
-};
-
-const savePDFLocally = async (buffer, pdfURL, destinationDir, fs, pathPrefix = "/static/media") => {
-  const urlObj = url.parse(pdfURL);
-  const pathObj = path.parse(pdfURL);
+const saveAssetLocally = async (buffer, assetURL, destinationDir, fs, pathPrefix = "/static/media") => {
+  const urlObj = url.parse(assetURL);
+  const pathObj = path.parse(assetURL);
   const fileName = pathObj.base;
   const filePath = urlObj.pathname.replace(fileName, "");
 
@@ -803,8 +783,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
   const basePath = `http://localhost:${options.port}`;
   const publicPath = options.publicPath;
   const ajaxCache = {};
-  const imagesToSave = {};
-  const pdfsToSave = {};
+  const assetsToSave = {};
   const { http2PushManifest } = options;
   const http2PushManifestItems = {};
 
@@ -828,7 +807,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
         preconnectThirdParty ||
         http2PushManifest
       ) {
-        const { ajaxCache: ac, http2PushManifestItems: hpm, imagesToSave: its, pdfsToSave: pts } = preloadResources(
+        const { ajaxCache: ac, http2PushManifestItems: hpm, assetsToSave: ats } = preloadResources(
           {
             page,
             basePath,
@@ -844,8 +823,7 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
         );
         ajaxCache[route] = ac;
         http2PushManifestItems[route] = hpm;
-        imagesToSave[route] = its;
-        pdfsToSave[route] = pts;
+        assetsToSave[route] = ats;
       }
     },
     afterFetch: async ({ page, route, browser, addToQueue }) => {
@@ -853,8 +831,6 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
       const saveAjaxRequestJSON = options.saveAjaxRequestJSON;
       const splitAjaxRequestFiles = options.splitAjaxRequestFiles;
       const stripFromAjaxRequestURLs = options.stripFromAjaxRequestURLs;
-      const saveImagesLocally = options.saveImagesLocally;
-      const savePDFsLocally = options.savePDFsLocally;
       if (options.removeStyleTags) await removeStyleTags({ page });
       if (options.removeScriptTags) await removeScriptTags({ page });
       if (options.removeBlobs) await removeBlobs({ page });
@@ -925,31 +901,16 @@ const run = async (userOptions, { fs } = { fs: nativeFs }) => {
         }
       }
 
-      if (imagesToSave && Object.keys(imagesToSave).length > 0 && saveImagesLocally) {
-        const imageList = [];
+      if (assetsToSave && Object.keys(assetsToSave).length) {
+        const assetList = [];
 
-        for (const pagePath in imagesToSave) {
-          const pageImages = imagesToSave[pagePath];
-          for (const imageURL in pageImages) {
-            if (imageList.indexOf(imageURL) < 0) {
-              const buffer = pageImages[imageURL];
-              await saveImageLocally(buffer, imageURL, destinationDir, fs);
-              imageList.push(imageURL);
-            }
-          }
-        }
-      }
-
-      if (pdfsToSave && Object.keys(pdfsToSave).length > 0 && savePDFsLocally) {
-        const pdfList = [];
-
-        for (const pagePath in pdfsToSave) {
-          const pagePDFs = pdfsToSave[pagePath];
-          for (const pdfURL in pagePDFs) {
-            if (pdfList.indexOf(pdfURL) < 0) {
-              const buffer = pagePDFs[pdfURL];
-              await savePDFLocally(buffer, pdfURL, destinationDir, fs);
-              pdfList.push(pdfURL);
+        for (const pagePath in assetsToSave) {
+          const pageAssets = assetsToSave[pagePath];
+          for (const assetURL in pageAssets) {
+            if (assetList.indexOf(assetURL) < 0) {
+              const buffer = pageAssets[assetURL];
+              await saveAssetLocally(buffer, assetURL, destinationDir, fs);
+              assetList.push(assetURL);
             }
           }
         }
